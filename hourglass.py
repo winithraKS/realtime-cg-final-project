@@ -11,7 +11,7 @@ Controls
 --------
   Drag mouse   – orbit camera
   Scroll wheel – zoom
-  F            – flip hourglass (real 180° rotation, ~1.4 s)
+  F            – flip hourglass (180° rotation)
   R            – reset particles to upper chamber
   Space        – pause / resume
   Esc          – quit
@@ -34,15 +34,15 @@ FRICTION           = 0.96
 PARTICLE_RADIUS    = 0.04
 Y_NECK             = 0.0
 R_NECK             = 0.1
-Y_TOP              = 1.0
-Y_BOT              = -1.0
+Y_TOP              = 0.8
+Y_BOT              = -1.2
 R_CONE             = 0.5
 CELL_SIZE          = PARTICLE_RADIUS * 2.5
 FLIP_DURATION      = 5          # seconds for one 180 deg flip
 WORLD_GRAVITY      = np.array([0.0, -9.8, 0.0], dtype=np.float64)
 SUB_STEPS          = 5          # physics sub-steps per frame (for stability)
 SUB_STEPS_2        = 3          # collision passes per sub-step (for stability)
-PUSH_FACTOR        = 0.8        # how much to separate overlapping particles (0.5-0.8)
+PUSH_FACTOR        = 0.8        # how much to separate overlapping particles
 
 # MARK: Shaders
 # ───────────────────────────── SHADERS ─────────────────────────────
@@ -57,26 +57,6 @@ GLASS_FRAG = load_shader("shaders/glass.frag")
 
 # MARK: Mesh
 # ──────────────────────── GEOMETRY HELPERS ─────────────────────────
-def make_sphere(radius=1.0, stacks=10, slices=14):
-    verts, norms = [], []
-    for i in range(stacks):
-        phi0 = math.pi * i / stacks - math.pi / 2
-        phi1 = math.pi * (i + 1) / stacks - math.pi / 2
-        for j in range(slices):
-            th0 = 2 * math.pi * j / slices
-            th1 = 2 * math.pi * (j + 1) / slices
-            def pt(phi, th):
-                return [radius*math.cos(phi)*math.cos(th),
-                        radius*math.sin(phi),
-                        radius*math.cos(phi)*math.sin(th)]
-            p00, p10 = pt(phi0, th0), pt(phi1, th0)
-            p01, p11 = pt(phi0, th1), pt(phi1, th1)
-            for p in [p00, p10, p11, p00, p11, p01]:
-                verts.extend(p)
-                norms.extend([v / radius for v in p])
-    return np.array(verts, np.float32), np.array(norms, np.float32)
-
-
 def make_hourglass_mesh(segments=72):
     verts, norms = [], []
 
@@ -119,34 +99,24 @@ def make_hourglass_mesh(segments=72):
 
     return np.array(verts, np.float32), np.array(norms, np.float32)
 
-
-# ───────────────────────── SPATIAL HASH ────────────────────────────
-class SpatialHash:
-    def __init__(self, cell_size):
-        self.cs    = cell_size
-        self.table = {}
-
-    def _key(self, p):
-        return (int(math.floor(p[0]/self.cs)),
-                int(math.floor(p[1]/self.cs)),
-                int(math.floor(p[2]/self.cs)))
-
-    def build(self, positions):
-        self.table.clear()
-        for i, p in enumerate(positions):
-            k = self._key(p)
-            self.table.setdefault(k, []).append(i)
-
-    def neighbors(self, pos):
-        cx, cy, cz = self._key(pos)
-        out = []
-        for dx in (-1,0,1):
-            for dy in (-1,0,1):
-                for dz in (-1,0,1):
-                    k = (cx+dx, cy+dy, cz+dz)
-                    if k in self.table:
-                        out.extend(self.table[k])
-        return out
+def make_sphere(radius=1.0, stacks=10, slices=14):
+    verts, norms = [], []
+    for i in range(stacks):
+        phi0 = math.pi * i / stacks - math.pi / 2
+        phi1 = math.pi * (i + 1) / stacks - math.pi / 2
+        for j in range(slices):
+            th0 = 2 * math.pi * j / slices
+            th1 = 2 * math.pi * (j + 1) / slices
+            def pt(phi, th):
+                return [radius*math.cos(phi)*math.cos(th),
+                        radius*math.sin(phi),
+                        radius*math.cos(phi)*math.sin(th)]
+            p00, p10 = pt(phi0, th0), pt(phi1, th0)
+            p01, p11 = pt(phi0, th1), pt(phi1, th1)
+            for p in [p00, p10, p11, p00, p11, p01]:
+                verts.extend(p)
+                norms.extend([v / radius for v in p])
+    return np.array(verts, np.float32), np.array(norms, np.float32)
 
 # MARK: Helpers
 # ──────────────────────── HOURGLASS BOUNDS ─────────────────────────
@@ -199,6 +169,34 @@ def rot_z_mat4(angle_rad):
         [ 0,  0, 0, 1],
     ], dtype=np.float32)
 
+# ───────────────────────── SPATIAL HASH ────────────────────────────
+class SpatialHash:
+    def __init__(self, cell_size):
+        self.cs    = cell_size
+        self.table = {}
+
+    def _key(self, p):
+        return (int(math.floor(p[0]/self.cs)),
+                int(math.floor(p[1]/self.cs)),
+                int(math.floor(p[2]/self.cs)))
+
+    def build(self, positions):
+        self.table.clear()
+        for i, p in enumerate(positions):
+            k = self._key(p)
+            self.table.setdefault(k, []).append(i)
+
+    def neighbors(self, pos):
+        cx, cy, cz = self._key(pos)
+        out = []
+        for dx in (-1,0,1):
+            for dy in (-1,0,1):
+                for dz in (-1,0,1):
+                    k = (cx+dx, cy+dy, cz+dz)
+                    if k in self.table:
+                        out.extend(self.table[k])
+        return out
+
 # MARK: Particle
 # ──────────────────────── PARTICLE SYSTEM (Update) ──────────────────────────
 class ParticleSystem:
@@ -216,41 +214,6 @@ class ParticleSystem:
         )
         self.reset()
 
-    def reset(self):
-        rng = np.random.default_rng(411)
-
-        self.pos[:] = 0.0
-        self.vel[:] = 0.0
-
-        for i in range(self.n):
-            radius = self.radius[i]
-            placed = False
-
-            for _ in range(100):
-                y = rng.uniform(0.5, Y_TOP - radius)
-                r_lim = max( hourglass_radius_at(y, radius), radius)
-
-                r = rng.uniform(0, r_lim)
-                a = rng.uniform(0, 2 * math.pi)
-                candidate = np.array([ r * math.cos(a), y, r * math.sin(a) ])
-
-                ok = True
-                for j in range(i):
-                    min_d = ( self.radius[i] + self.radius[j] )
-                    delta = candidate - self.pos[j]
-                    if np.dot(delta, delta) < (min_d * min_d):
-                        ok = False
-                        break
-
-                if ok:
-                    self.pos[i] = candidate
-                    placed = True
-                    break
-
-            if not placed: self.pos[i] = [0, Y_TOP - radius, 0]
-
-        self.prev[:] = self.pos.copy()
-
     # MARK: Step()
     def step(self, flip_angle: float):
 
@@ -266,9 +229,8 @@ class ParticleSystem:
 
         g_local = R_inv @ WORLD_GRAVITY
 
-        sub_dt = DT / SUB_STEPS
-
         # SUBSTEPS
+        sub_dt = DT / SUB_STEPS
         for _ in range(SUB_STEPS):
 
             old_pos = self.pos.copy()
@@ -317,8 +279,7 @@ class ParticleSystem:
                             tangent_vel = ( rel_vel - np.dot(rel_vel, n_hat) * n_hat )
                             tangent_speed = np.linalg.norm(tangent_vel)
 
-                            if tangent_speed < 0.02:
-                                tangent_vel[:] = 0.0
+                            if tangent_speed < 0.02: tangent_vel[:] = 0.0
 
                             # STATIC / DYNAMIC FRICTION
                             friction_strength = 0.12
@@ -339,6 +300,41 @@ class ParticleSystem:
 
             # RESYNC VERLET
             self.prev[:] = ( self.pos - self.vel * sub_dt )
+
+    def reset(self):
+        rng = np.random.default_rng(411)
+
+        self.pos[:] = 0.0
+        self.vel[:] = 0.0
+
+        for i in range(self.n):
+            radius = self.radius[i]
+            placed = False
+
+            for _ in range(100):
+                y = rng.uniform(0.3, Y_TOP - radius)
+                r_lim = max( hourglass_radius_at(y, radius), radius)
+
+                r = rng.uniform(0, r_lim)
+                a = rng.uniform(0, 2 * math.pi)
+                candidate = np.array([ r * math.cos(a), y, r * math.sin(a) ])
+
+                ok = True
+                for j in range(i):
+                    min_d = ( self.radius[i] + self.radius[j] )
+                    delta = candidate - self.pos[j]
+                    if np.dot(delta, delta) < (min_d * min_d):
+                        ok = False
+                        break
+
+                if ok:
+                    self.pos[i] = candidate
+                    placed = True
+                    break
+
+            if not placed: self.pos[i] = [0, Y_TOP - radius, 0]
+
+        self.prev[:] = self.pos.copy()
 
     # เพิ่ม Property เพื่อส่งค่าไป Render (หมุนเฉพาะตอนวาดภาพ)
     def get_world_pos_f32(self, flip_angle):
@@ -419,7 +415,7 @@ class HudRenderer:
         self.ctx.enable(moderngl.DEPTH_TEST)
 
 def reset_camera():
-    return 0.0, 18.0, 4.2, 0.0, 0.0
+    return 0.0, 5.0, 4.2, 0.0, 0.0
 
 # MARK: Main
 # ──────────────────────────── MAIN ─────────────────────────────────
